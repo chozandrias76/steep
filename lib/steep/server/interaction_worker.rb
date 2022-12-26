@@ -5,7 +5,7 @@ module Steep
 
       ApplyChangeJob = Class.new()
       HoverJob = Struct.new(:id, :path, :line, :column, keyword_init: true)
-      CompletionJob = Struct.new(:id, :path, :line, :column, :trigger, keyword_init: true)
+      CompletionJob = _ = Struct.new(:id, :path, :line, :column, :trigger, keyword_init: true)
 
       LSP = LanguageServer::Protocol
 
@@ -127,52 +127,83 @@ module Steep
                 items: completion_items
               )
             when (targets = project.targets_for_path(job.path)).is_a?(Array)
-              target = targets[0] or return
-              sig_service = service.signature_services[target.name]
-              relative_path = job.path
-              buffer = RBS::Buffer.new(name: relative_path, content: sig_service.files[relative_path].content)
-              pos = buffer.loc_to_pos([job.line, job.column])
-              prefix = buffer.content[0...pos].reverse[/\A[\w\d]*/].reverse
+              target = targets[0] or raise
+              sig_service = service.signature_services[target.name] or raise
 
               case sig_service.status
               when Steep::Services::SignatureService::SyntaxErrorStatus, Steep::Services::SignatureService::AncestorErrorStatus
                 return
               end
 
+              relative_path = job.path
+              buffer = RBS::Buffer.new(name: relative_path, content: sig_service.files[relative_path].content)
+
+              Steep.logger.fatal {
+                {
+                  job: job
+                }.inspect
+              }
+              prefix = Services::TypeNameCompletion::Prefix.parse(buffer, line: job.line, column: job.column)
+
               decls = sig_service.files[relative_path].decls
+              decls.is_a?(Array) or raise
               locator = RBS::Locator.new(decls: decls)
 
-              _hd, tail = locator.find2(line: job.line, column: job.column)
+              (_hd, tail = locator.find2(line: job.line, column: job.column)) or return
 
-              namespace = []
-              tail.each do |t|
+              context = nil #: RBS::Resolver::context
+
+              tail.reverse_each do |t|
                 case t
                 when RBS::AST::Declarations::Module, RBS::AST::Declarations::Class
-                  namespace << t.name.to_namespace
+                  if (last_type_name = context&.[](1)).is_a?(RBS::TypeName)
+                    context = [context, last_type_name + t.name]
+                  else
+                    context = [context, t.name.absolute!]
+                  end
                 end
               end
-              context = []
 
-              namespace.each do |ns|
-                context.map! { |n| ns + n }
-                context << ns
+              completion = Services::TypeNameCompletion.new(env: sig_service.latest_env, context: context)
+              type_names = completion.find_type_names(prefix)
+              prefix_size = prefix&.size || 0
+
+              completion_items = type_names.map {|type_name|
+                relative_name = completion.relative_name_in_context(type_name)
+
+                Steep.logger.fatal {
+                  {
+                    type_name: type_name.to_s,
+                    relative_name: relative_name.to_s,
+                    context: context
+                  }.inspect
+                }
+
+                format_completion_item_for_rbs(sig_service, type_name, job, relative_name.to_s, prefix_size)
+              }
+
+              ["untyped", "void", "bool", "class", "module", "instance", "nil"].each do |name|
+                completion_items << LanguageServer::Protocol::Interface::CompletionItem.new(
+                  label: name,
+                  detail: "(builtin type)",
+                  text_edit: LanguageServer::Protocol::Interface::TextEdit.new(
+                    range: LanguageServer::Protocol::Interface::Range.new(
+                      start: LanguageServer::Protocol::Interface::Position.new(
+                        line: job.line - 1,
+                        character: job.column - prefix_size
+                      ),
+                      end: LanguageServer::Protocol::Interface::Position.new(
+                        line: job.line - 1,
+                        character: job.column
+                      )
+                    ),
+                    new_text: name
+                  ),
+                  kind: LSP::Constant::CompletionItemKind::KEYWORD,
+                  filter_text: name,
+                  sort_text: "zz__#{name}"
+                )
               end
-
-              context.map!(&:absolute!)
-
-              class_items = sig_service.latest_env.class_decls.keys.map { |type_name|
-                format_completion_item_for_rbs(sig_service, type_name, context, job, prefix)
-              }.compact
-
-              alias_items = sig_service.latest_env.alias_decls.keys.map { |type_name|
-                format_completion_item_for_rbs(sig_service, type_name, context, job, prefix)
-              }.compact
-
-              interface_items = sig_service.latest_env.interface_decls.keys.map {|type_name|
-                format_completion_item_for_rbs(sig_service, type_name, context, job, prefix)
-              }.compact
-
-              completion_items = class_items + alias_items + interface_items
 
               LSP::Interface::CompletionList.new(
                 is_incomplete: false,
@@ -183,11 +214,11 @@ module Steep
         end
       end
 
-      def format_completion_item_for_rbs(sig_service, type_name, context, job, prefix)
+      def format_completion_item_for_rbs(sig_service, type_name, job, complete_text, prefix_size)
         range = LanguageServer::Protocol::Interface::Range.new(
           start: LanguageServer::Protocol::Interface::Position.new(
             line: job.line - 1,
-            character: job.column - prefix.size
+            character: job.column - prefix_size
           ),
           end: LanguageServer::Protocol::Interface::Position.new(
             line: job.line - 1,
@@ -195,50 +226,55 @@ module Steep
           )
         )
 
-        name = relative_name_in_context(type_name, context).to_s
-
-        return unless name.start_with?(prefix)
-
         case type_name.kind
         when :class
           class_decl = sig_service.latest_env.class_decls[type_name]&.decls[0]&.decl or raise
 
           LanguageServer::Protocol::Interface::CompletionItem.new(
-            label: "#{name}",
+            label: complete_text,
+            detail: type_name.to_s,
             documentation:  format_comment(class_decl.comment),
             text_edit: LanguageServer::Protocol::Interface::TextEdit.new(
               range: range,
-              new_text: name
+              new_text: complete_text
             ),
             kind: LSP::Constant::CompletionItemKind::CLASS,
-            insert_text_format: LSP::Constant::InsertTextFormat::SNIPPET
-
+            insert_text_format: LSP::Constant::InsertTextFormat::SNIPPET,
+            sort_text: complete_text,
+            filter_text: complete_text
           )
         when :alias
           alias_decl = sig_service.latest_env.alias_decls[type_name]&.decl or raise
+
           LanguageServer::Protocol::Interface::CompletionItem.new(
-            label: "#{name}",
+            label: complete_text,
+            detail: type_name.to_s,
             text_edit: LanguageServer::Protocol::Interface::TextEdit.new(
               range: range,
-              new_text: name
+              new_text: complete_text
             ),
             documentation: format_comment(alias_decl.comment),
             # https://github.com/microsoft/vscode-languageserver-node/blob/6d78fc4d25719b231aba64a721a606f58b9e0a5f/client/src/common/client.ts#L624-L650
             kind: LSP::Constant::CompletionItemKind::FIELD,
-            insert_text_format: LSP::Constant::InsertTextFormat::SNIPPET
+            insert_text_format: LSP::Constant::InsertTextFormat::SNIPPET,
+            sort_text: complete_text,
+            filter_text: complete_text
           )
         when :interface
           interface_decl = sig_service.latest_env.interface_decls[type_name]&.decl or raise
 
           LanguageServer::Protocol::Interface::CompletionItem.new(
-            label: "#{name}",
+            label: complete_text,
+            detail: type_name.to_s,
             text_edit: LanguageServer::Protocol::Interface::TextEdit.new(
               range: range,
-              new_text: name
+              new_text: complete_text
             ),
             documentation: format_comment(interface_decl.comment),
             kind: LanguageServer::Protocol::Constant::CompletionItemKind::INTERFACE,
-            insert_text_format: LanguageServer::Protocol::Constant::InsertTextFormat::SNIPPET
+            insert_text_format: LanguageServer::Protocol::Constant::InsertTextFormat::SNIPPET,
+            sort_text: complete_text,
+            filter_text: complete_text
           )
         end
       end

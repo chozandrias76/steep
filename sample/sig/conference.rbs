@@ -1,8 +1,16 @@
 class Conference
   attr_reader title: String
-  attr_reader year: Integer
+  attr_reader year: String
 
   def initialize: (title: String, year: Integer) -> void
+
+  class Speaker
+  end
+
+  # hogehoge talktalk
+  class Talk
+    def each_speaker: { (instance) -> void } -> void
+  end
 end
 
 class NilClass

@@ -1,0 +1,113 @@
+module Steep
+  module Services
+    class TypeNameCompletion
+      module Prefix
+        type t = nil # no prefix
+               | RawIdentPrefix
+               | NamespacedIdentPrefix
+               | NamespacePrefix
+
+        # Uident or Lident is given, but no `::` (==namespace)
+        #
+        # ```
+        # Str←     Uident
+        # c←       Lident
+        # ```
+        #
+        class RawIdentPrefix
+          attr_reader ident: String
+
+          # Returns true if the `ident` is a Ruby class name
+          #
+          def const_name?: () -> bool
+
+          def initialize: (String ident) -> void
+
+          def size: () -> Integer
+        end
+
+        # Uident or Lident following a namespace
+        #
+        # ```
+        # ::L←         Uident
+        # RBS::Enviro← Uident
+        # ```
+        #
+        class NamespacedIdentPrefix
+          attr_reader namespace: RBS::Namespace
+
+          attr_reader ident: String
+
+          def const_name?: () -> bool
+
+          def initialize: (RBS::Namespace, String ident, Integer size) -> void
+
+          def size: () -> Integer
+        end
+
+        # Namespace is given
+        #
+        # ```
+        # RBS::←
+        # ::←
+        # ```
+        class NamespacePrefix
+          attr_reader namespace: RBS::Namespace
+
+          def initialize: (RBS::Namespace, Integer size) -> void
+
+          def size: () -> Integer
+        end
+
+        # line number is 1 origin (Rubyish)
+        #
+        def self.parse: (RBS::Buffer input, line: Integer, column: Integer) -> t?
+      end
+
+      class Item
+        # The text to be completed
+        #
+        attr_reader complete_text: String
+
+        # The prefix
+        attr_reader prefix: Prefix::t?
+
+        # Name of the type or constant
+        #
+        attr_reader full_name: RBS::TypeName
+
+        # The text to be inserted after the prefix
+        #
+        def insert_text: () -> String
+
+        def initialize: (prefix: Prefix::t?, full_name: RBS::TypeName, complete_text: String) -> void
+      end
+
+      attr_reader env: RBS::Environment
+
+      attr_reader context: RBS::Resolver::context
+
+      attr_reader type_name_resolver: RBS::Resolver::TypeNameResolver
+
+      def initialize: (env: RBS::Environment, context: RBS::Resolver::context) -> void
+
+      def complete_class_name: (RBS::Buffer input, line: Integer, column: Integer) -> Array[Item]
+
+      # Find type names from the context for RBS
+      #
+      # Doesn't take account of ancestors of the context.
+      #
+      def find_type_names: (Prefix::t) -> Array[RBS::TypeName]
+
+      def relative_name_in_context: (RBS::TypeName) -> RBS::TypeName
+
+      def format_constant_name: (RBS::TypeName) -> String
+
+      def each_type_name: () { (RBS::TypeName) -> void } -> void
+                        | () -> Enumerator[RBS::TypeName, void]
+
+      def each_outer_module: (?RBS::Resolver::context) { (RBS::Namespace) -> void } -> RBS::Namespace
+                           | () -> Enumerator[RBS::Namespace, void]
+    end
+  end
+end

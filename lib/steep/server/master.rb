@@ -540,15 +540,13 @@ module Steep
                         open_close: true
                       ),
                       hover_provider: {
-                        workDoneProgress: true,
-                        partialResults: true,
-                        partialResult: true
+                        workDoneProgress: true
                       },
                       completion_provider: LSP::Interface::CompletionOptions.new(
                         trigger_characters: [".", "@", ":"],
                         work_done_progress: true
                       ),
-                      workspace_symbol_provider: true,
+                      workspace_symbol_provider: LSP::Interface::WorkspaceSymbolOptions.new(work_done_progress: true),
                       definition_provider: true,
                       declaration_provider: false,
                       implementation_provider: true,

@@ -7,11 +7,22 @@ module Steep
 
       HoverJob: untyped
 
-      CompletionJob: untyped
+      class CompletionJob
+        attr_reader id: String
+
+        attr_reader path: Pathname
+
+        attr_reader line: Integer
+
+        attr_reader column: Integer
+
+
+        def initialize: (id: String, path: Pathname, line: Integer, column: Integer) -> void
+      end
 
       LSP: untyped
 
-      attr_reader service: untyped
+      attr_reader service: Services::TypeCheckService
 
       def initialize: (project: untyped, reader: untyped, writer: untyped, ?queue: untyped) -> void
 
@@ -21,9 +32,9 @@ module Steep
 
       def process_hover: (untyped job) -> untyped
 
-      def process_completion: (untyped job) -> untyped
+      def process_completion: (CompletionJob job) -> untyped
 
-      def format_completion_item_for_rbs: (untyped sig_service, untyped type_name, untyped context, untyped job, untyped prefix) -> (nil | untyped)
+      def format_completion_item_for_rbs: (Services::SignatureService, RBS::TypeName, CompletionJob job, String complete_text, Integer prefix_size) -> untyped
 
       def format_comment: (untyped comment) -> (untyped | nil)
 
